@@ -9,10 +9,7 @@ Build an end-to-end ML system that analyzes the Shark Tank India dataset (750+ p
 3. **Shark Recommendation** — Multi-label classification: which sharks are likely to invest?
 
 Six model families will be trained per task (where applicable), all tuned with **Optuna**:
-Random Forest, Decision Tree, Isolation Forest, Naïve Bayes, Logistic Regression, Neural Network.
-
-> [!IMPORTANT]
-> **Isolation Forest** is an unsupervised anomaly detection algorithm. It will be used as a **preprocessing/anomaly detector** (flagging outlier pitches), not as a direct classifier/regressor. Its Optuna tuning will optimize contamination and tree parameters for best anomaly-F1 on labeled outliers. The other 5 models handle the actual predictions.
+Random Forest, Decision Tree,Naïve Bayes, Logistic Regression, Neural Network.
 
 ---
 
@@ -54,7 +51,6 @@ ML_Project/
 │   │   ├── deal_classifier.py  # Task 1: Deal prediction models
 │   │   ├── valuation_regressor.py  # Task 2: Valuation estimation models
 │   │   ├── shark_recommender.py    # Task 3: Multi-label shark recommendation
-│   │   └── anomaly_detector.py     # Isolation Forest anomaly detection
 │   ├── tuning/
 │   │   ├── __init__.py
 │   │   └── optuna_tuner.py     # Unified Optuna tuning engine
@@ -217,13 +213,6 @@ Target: 7 binary labels (one per shark: Namita, Vineeta, Anupam, Aman, Peyush, R
 
 Metrics: Micro-F1, Macro-F1, Hamming Loss, Per-Shark Accuracy, Subset Accuracy
 
-#### [NEW] [anomaly_detector.py](file:///c:/projects/ML_Project/src/models/anomaly_detector.py)
-**Isolation Forest for Anomaly Detection (Preprocessing)**
-- Detect outlier pitches across all features
-- Optuna tunes: `n_estimators`, `max_samples`, `contamination`, `max_features`
-- Adds `is_anomaly` feature to the dataset
-- Visualization of detected anomalies
-
 ---
 
 ### Component 5: Optuna Tuning Engine
@@ -277,15 +266,14 @@ Reusable plotting functions:
 #### [NEW] [train.py](file:///c:/projects/ML_Project/train.py)
 Main script that:
 1. Loads and preprocesses data
-2. Runs anomaly detection (Isolation Forest)
-3. For each task (deal, valuation, shark):
+2. For each task (deal, valuation, shark):
    - For each model family:
      - Runs Optuna hyperparameter tuning
      - Trains final model with best params
      - Evaluates on test set
      - Saves model artifact
-4. Generates comparison reports
-5. Saves all results to JSON
+3. Generates comparison reports
+4. Saves all results to JSON
 
 Can be run with CLI args: `python train.py --task deal --model rf --trials 50`
 
