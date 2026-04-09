@@ -5,20 +5,36 @@ dataloader.py — Dataset Loading and Validation Module
 Shark Tank India Decision Modeling Project
 
 Responsibilities:
-    1. Read the Kaggle CSV (Shark Tank India dataset — Seasons 1–5)
+    1. Download the dataset from Kaggle using the Kaggle API
     2. Validate schema: check expected columns, data types, and shape
     3. Report missing values, duplicates, and basic consistency issues
     4. Return a clean, validated DataFrame for downstream preprocessing
 
+Prerequisites:
+    - Install the kaggle package:  pip install kaggle
+    - Set up Kaggle API credentials:
+        • Option A: Place kaggle.json in ~/.kaggle/kaggle.json (Linux/Mac)
+                     or C:\\Users\\<user>\\.kaggle\\kaggle.json (Windows)
+        • Option B: Set environment variables KAGGLE_USERNAME and KAGGLE_KEY
+
 Usage:
     from dataloader import load_dataset
 
-    df = load_dataset("data/Shark Tank India Dataset.csv")
+    # Download from Kaggle and load (default dataset)
+    df = load_dataset()
+
+    # Specify a different Kaggle dataset slug
+    df = load_dataset(kaggle_dataset="thirumani/shark-tank-india")
+
+    # Load from a local CSV file (legacy fallback)
+    df = load_dataset(path="data/Shark Tank India Dataset.csv")
 """
 
 import os
 import sys
 import logging
+import zipfile
+import glob
 import pandas as pd
 import numpy as np
 from typing import Optional
@@ -38,6 +54,14 @@ logging.basicConfig(
     ],
 )
 logger = logging.getLogger(__name__)
+
+# ─────────────────────────────────────────────────────────────────
+# Default Configuration
+# ─────────────────────────────────────────────────────────────────
+DEFAULT_KAGGLE_DATASET = "thirumani/shark-tank-india"
+DEFAULT_DATA_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data"
+)
 
 # ─────────────────────────────────────────────────────────────────
 # Expected Schema Definition
@@ -169,7 +193,136 @@ SHARKS = ["Namita", "Vineeta", "Anupam", "Aman", "Peyush", "Ritesh", "Amit"]
 
 
 # ─────────────────────────────────────────────────────────────────
-# Core Functions
+# Kaggle API Download
+# ─────────────────────────────────────────────────────────────────
+
+def _download_from_kaggle(
+    dataset_slug: str = DEFAULT_KAGGLE_DATASET,
+    download_dir: str = DEFAULT_DATA_DIR,
+    force: bool = False,
+) -> str:
+    """
+    Download a dataset from Kaggle using the Kaggle API.
+
+    Parameters
+    ----------
+    dataset_slug : str
+        The Kaggle dataset identifier in 'owner/dataset-name' format.
+        Default: 'thirumani/shark-tank-india'
+    download_dir : str
+        Local directory to download and extract files into.
+        Default: '<project_root>/data'
+    force : bool
+        If True, re-download even if files already exist locally.
+
+    Returns
+    -------
+    str
+        Path to the extracted CSV file.
+
+    Raises
+    ------
+    ImportError
+        If the kaggle package is not installed.
+    RuntimeError
+        If Kaggle API authentication fails or download errors occur.
+    FileNotFoundError
+        If no CSV file is found after extraction.
+    """
+    # Check if data already exists locally (skip download if not forced)
+    if not force:
+        existing_csvs = glob.glob(os.path.join(download_dir, "*.csv"))
+        if existing_csvs:
+            logger.info(
+                f"Dataset already exists locally ({len(existing_csvs)} CSV file(s) found). "
+                f"Use force=True to re-download."
+            )
+            if len(existing_csvs) == 1:
+                return existing_csvs[0]
+            else:
+                # Return the largest CSV (most likely the main dataset)
+                largest = max(existing_csvs, key=os.path.getsize)
+                logger.info(f"Multiple CSVs found — using largest: {os.path.basename(largest)}")
+                return largest
+
+    # ── Import and authenticate Kaggle API ──
+    try:
+        from kaggle.api.kaggle_api_extended import KaggleApi
+    except ImportError:
+        raise ImportError(
+            "The 'kaggle' package is required.\n"
+            "Install it with:  pip install kaggle\n\n"
+            "You also need Kaggle API credentials:\n"
+            "  1. Go to https://www.kaggle.com/settings → 'Create New Token'\n"
+            "  2. Save the downloaded kaggle.json to:\n"
+            "     • Windows: C:\\Users\\<username>\\.kaggle\\kaggle.json\n"
+            "     • Linux/Mac: ~/.kaggle/kaggle.json\n"
+            "  OR set environment variables: KAGGLE_USERNAME and KAGGLE_KEY"
+        )
+
+    logger.info("Authenticating with Kaggle API...")
+    try:
+        api = KaggleApi()
+        api.authenticate()
+        logger.info("Kaggle API authentication successful ✓")
+    except Exception as e:
+        raise RuntimeError(
+            f"Kaggle API authentication failed: {e}\n\n"
+            "Please ensure your credentials are set up correctly:\n"
+            "  • kaggle.json in ~/.kaggle/ (or C:\\Users\\<user>\\.kaggle\\ on Windows)\n"
+            "  • OR environment variables KAGGLE_USERNAME and KAGGLE_KEY"
+        )
+
+    # ── Download the dataset ──
+    os.makedirs(download_dir, exist_ok=True)
+    logger.info(f"Downloading dataset '{dataset_slug}' to '{download_dir}'...")
+
+    try:
+        api.dataset_download_files(
+            dataset_slug,
+            path=download_dir,
+            unzip=True,
+        )
+        logger.info(f"Dataset downloaded and extracted successfully ✓")
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to download dataset '{dataset_slug}': {e}\n"
+            "Please check:\n"
+            "  • Dataset slug is correct (format: 'owner/dataset-name')\n"
+            "  • You have internet connectivity\n"
+            "  • You have accepted the dataset's terms on Kaggle (if required)"
+        )
+
+    # ── Locate the extracted CSV ──
+    csv_files = glob.glob(os.path.join(download_dir, "*.csv"))
+
+    if not csv_files:
+        # Check for nested directories (some datasets extract into subdirs)
+        csv_files = glob.glob(os.path.join(download_dir, "**", "*.csv"), recursive=True)
+
+    if not csv_files:
+        raise FileNotFoundError(
+            f"No CSV files found after extracting dataset '{dataset_slug}' "
+            f"into '{download_dir}'. Check the dataset contents on Kaggle."
+        )
+
+    if len(csv_files) == 1:
+        filepath = csv_files[0]
+    else:
+        # Multiple CSVs — pick the largest one (likely the main dataset)
+        filepath = max(csv_files, key=os.path.getsize)
+        logger.info(
+            f"Multiple CSV files found after extraction: "
+            f"{[os.path.basename(f) for f in csv_files]}"
+        )
+        logger.info(f"Using largest CSV: {os.path.basename(filepath)}")
+
+    logger.info(f"Dataset file: {filepath}")
+    return filepath
+
+
+# ─────────────────────────────────────────────────────────────────
+# CSV Reading (Local File)
 # ─────────────────────────────────────────────────────────────────
 
 def _find_csv(path: str) -> str:
@@ -218,6 +371,10 @@ def _read_csv(filepath: str) -> pd.DataFrame:
     logger.info(f"Dataset loaded successfully: {df.shape[0]} rows × {df.shape[1]} columns")
     return df
 
+
+# ─────────────────────────────────────────────────────────────────
+# Validation Functions
+# ─────────────────────────────────────────────────────────────────
 
 def _validate_schema(df: pd.DataFrame) -> dict:
     """
@@ -509,17 +666,31 @@ def _print_summary(df: pd.DataFrame) -> None:
 # ─────────────────────────────────────────────────────────────────
 
 def load_dataset(
-    path: str,
+    path: Optional[str] = None,
+    kaggle_dataset: str = DEFAULT_KAGGLE_DATASET,
+    download_dir: str = DEFAULT_DATA_DIR,
+    force_download: bool = False,
     validate: bool = True,
     verbose: bool = True,
 ) -> pd.DataFrame:
     """
     Load and validate the Shark Tank India dataset.
 
+    By default, downloads the dataset from Kaggle using the Kaggle API.
+    If `path` is provided, loads from a local CSV file instead (legacy mode).
+
     Parameters
     ----------
-    path : str
-        Path to the CSV file or directory containing the CSV.
+    path : str, optional
+        Path to a local CSV file or directory. If provided, skips Kaggle
+        download and loads directly from this path (legacy fallback).
+    kaggle_dataset : str, default 'thirumani/shark-tank-india'
+        Kaggle dataset slug in 'owner/dataset-name' format.
+        Used only when `path` is None.
+    download_dir : str, default '<project_root>/data'
+        Directory to download and extract the Kaggle dataset into.
+    force_download : bool, default False
+        If True, re-download from Kaggle even if files already exist locally.
     validate : bool, default True
         If True, run schema validation, missing value analysis,
         duplicate detection, and consistency checks.
@@ -533,6 +704,8 @@ def load_dataset(
 
     Raises
     ------
+    ImportError
+        If the kaggle package is not installed (when using Kaggle API mode).
     FileNotFoundError
         If the CSV file cannot be located.
     ValueError
@@ -542,15 +715,28 @@ def load_dataset(
     logger.info("SHARK TANK INDIA — DATA LOADER")
     logger.info("=" * 70)
 
-    # Step 1: Locate and read the CSV
-    filepath = _find_csv(path)
+    # Step 1: Obtain the CSV file
+    if path is not None:
+        # Legacy mode: load from local file path
+        logger.info("Mode: LOCAL FILE")
+        filepath = _find_csv(path)
+    else:
+        # Kaggle API mode: download and extract
+        logger.info(f"Mode: KAGGLE API (dataset: {kaggle_dataset})")
+        filepath = _download_from_kaggle(
+            dataset_slug=kaggle_dataset,
+            download_dir=download_dir,
+            force=force_download,
+        )
+
+    # Step 2: Read the CSV
     df = _read_csv(filepath)
 
     if not validate:
         logger.info("Validation skipped (validate=False)")
         return df
 
-    # Step 2: Schema validation
+    # Step 3: Schema validation
     logger.info("-" * 50)
     logger.info("SCHEMA VALIDATION")
     logger.info("-" * 50)
@@ -561,7 +747,7 @@ def load_dataset(
     else:
         logger.warning("Schema validation completed with warnings")
 
-    # Step 3: Critical column check
+    # Step 4: Critical column check
     logger.info("-" * 50)
     logger.info("CRITICAL COLUMN CHECK")
     logger.info("-" * 50)
@@ -573,25 +759,25 @@ def load_dataset(
             "Cannot proceed. Please verify the dataset."
         )
 
-    # Step 4: Missing value analysis
+    # Step 5: Missing value analysis
     logger.info("-" * 50)
     logger.info("MISSING VALUE ANALYSIS")
     logger.info("-" * 50)
     missing_report = _analyze_missing_values(df)
 
-    # Step 5: Duplicate detection
+    # Step 6: Duplicate detection
     logger.info("-" * 50)
     logger.info("DUPLICATE DETECTION")
     logger.info("-" * 50)
     dup_report = _check_duplicates(df)
 
-    # Step 6: Consistency checks
+    # Step 7: Consistency checks
     logger.info("-" * 50)
     logger.info("CONSISTENCY CHECKS")
     logger.info("-" * 50)
     consistency_issues = _check_consistency(df)
 
-    # Step 7: Summary
+    # Step 8: Summary
     if verbose:
         _print_summary(df)
 
@@ -651,7 +837,32 @@ if __name__ == "__main__":
     parser.add_argument(
         "path",
         type=str,
-        help="Path to the CSV file or directory containing the dataset",
+        nargs="?",
+        default=None,
+        help="Path to a local CSV file or directory (optional — uses Kaggle API if omitted)",
+    )
+    parser.add_argument(
+        "--kaggle",
+        action="store_true",
+        default=True,
+        help="Download from Kaggle API (default behavior when no path is given)",
+    )
+    parser.add_argument(
+        "--dataset-slug",
+        type=str,
+        default=DEFAULT_KAGGLE_DATASET,
+        help=f"Kaggle dataset slug (default: {DEFAULT_KAGGLE_DATASET})",
+    )
+    parser.add_argument(
+        "--download-dir",
+        type=str,
+        default=DEFAULT_DATA_DIR,
+        help=f"Directory to download dataset into (default: {DEFAULT_DATA_DIR})",
+    )
+    parser.add_argument(
+        "--force-download",
+        action="store_true",
+        help="Re-download from Kaggle even if files exist locally",
     )
     parser.add_argument(
         "--no-validate",
@@ -669,10 +880,13 @@ if __name__ == "__main__":
     try:
         df = load_dataset(
             path=args.path,
+            kaggle_dataset=args.dataset_slug,
+            download_dir=args.download_dir,
+            force_download=args.force_download,
             validate=not args.no_validate,
             verbose=not args.quiet,
         )
         print(f"\n✅ Dataset loaded successfully: {df.shape[0]} rows × {df.shape[1]} columns")
-    except (FileNotFoundError, ValueError) as e:
+    except (FileNotFoundError, ValueError, ImportError, RuntimeError) as e:
         print(f"\n❌ Error: {e}")
         sys.exit(1)
