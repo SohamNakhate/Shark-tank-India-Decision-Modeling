@@ -180,7 +180,7 @@ def run_preprocessing(df: pd.DataFrame):
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
-    # Optional: convert back to DataFrame (recommended)
+    # Optional: convert back to DataFrame
     X_scaled = pd.DataFrame(X_scaled, columns=X.columns)
 
     # =========================================================
